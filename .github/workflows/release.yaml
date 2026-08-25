@@ -1,0 +1,323 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require tagged commit on main
+        shell: pwsh
+        run: |
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if (0 -ne $LASTEXITCODE) {
+              throw "Release tag '$env:GITHUB_REF_NAME' does not point to a commit contained in main."
+          }
+      - id: version
+        name: Validate tag and package version
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -notmatch '^v(?<version>[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?)$') {
+              throw "Release tag '$tag' is not a supported v<semver> tag."
+          }
+
+          $tagVersion = $Matches.version
+          [xml]$project = Get-Content -LiteralPath 'Icod.Tar.csproj' -Raw
+          $versionNode = $project.SelectSingleNode('/Project/PropertyGroup/Version')
+          $packageVersionNode = $project.SelectSingleNode('/Project/PropertyGroup/PackageVersion')
+          if ($null -eq $versionNode -or $null -eq $packageVersionNode) {
+              throw 'Icod.Tar.csproj must declare both Version and PackageVersion.'
+          }
+
+          $projectVersion = $versionNode.InnerText
+          $packageVersion = $packageVersionNode.InnerText
+          if ($projectVersion -ne $packageVersion) {
+              throw "Version '$projectVersion' does not match PackageVersion '$packageVersion'."
+          }
+          if ($tagVersion -ne $packageVersion) {
+              throw "Tag version '$tagVersion' does not match PackageVersion '$packageVersion'."
+          }
+
+          "version=$tagVersion" >> $env:GITHUB_OUTPUT
+          "prerelease=$($tagVersion.Contains('-').ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+  validate:
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: Windows
+            architecture: x64
+          - os: windows-11-arm
+            platform: Windows
+            architecture: ARM64
+          - os: ubuntu-24.04
+            platform: Linux
+            architecture: x64
+          - os: ubuntu-24.04-arm
+            platform: Linux
+            architecture: ARM64
+          - os: macos-15-intel
+            platform: macOS
+            architecture: x64
+          - os: macos-15
+            platform: macOS
+            architecture: ARM64
+    name: ${{ matrix.platform }} ${{ matrix.architecture }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Verify supported distributions
+        shell: pwsh
+        run: ./packaging/VerifyDistribution.ps1 -Configuration Release
+
+  archives:
+    needs: [metadata, validate]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: windows-11-arm
+            rid: win-arm64
+          - os: ubuntu-24.04
+            rid: linux-x64
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+          - os: macos-15-intel
+            rid: osx-x64
+          - os: macos-15
+            rid: osx-arm64
+    name: ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Build release archive
+        shell: pwsh
+        run: >-
+          ./packaging/BuildReleaseArchive.ps1
+          -Configuration Release
+          -RuntimeIdentifier '${{ matrix.rid }}'
+          -Version '${{ needs.metadata.outputs.version }}'
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.rid }}
+          path: artifacts/release/Icod.Tar-${{ needs.metadata.outputs.version }}-${{ matrix.rid }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    needs: [metadata, validate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Pack tar
+        run: >-
+          dotnet pack Icod.Tar.csproj
+          -c Release
+          -o artifacts/release
+          -p:ContinuousIntegrationBuild=true
+      - name: Require expected package
+        shell: pwsh
+        run: |
+          $path = 'artifacts/release/Icod.Tar.${{ needs.metadata.outputs.version }}.nupkg'
+          if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Expected package '$path' was not produced."
+          }
+      - name: Upload NuGet package
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-package
+          path: artifacts/release/Icod.Tar.${{ needs.metadata.outputs.version }}.nupkg
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-nuget:
+    needs: [metadata, archives, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-package
+          path: artifacts/package
+      - name: Exchange GitHub OIDC token for NuGet credential
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_USER }}
+      - name: Publish to NuGet.org
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
+          $package = 'artifacts/package/Icod.Tar.${{ needs.metadata.outputs.version }}.nupkg'
+          dotnet nuget push $package `
+              --api-key $env:NUGET_API_KEY `
+              --source 'https://api.nuget.org/v3/index.json' `
+              --skip-duplicate
+          if (0 -ne $LASTEXITCODE) {
+              throw "NuGet.org publication failed with status $LASTEXITCODE."
+          }
+
+  publish-github-packages:
+    needs: [metadata, package, publish-nuget]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-package
+          path: artifacts/package
+      - name: Publish to GitHub Packages
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR_NAME: ${{ github.actor }}
+          GITHUB_OWNER: ${{ github.repository_owner }}
+        run: |
+          $source = "https://nuget.pkg.github.com/$env:GITHUB_OWNER/index.json"
+          dotnet nuget add source $source `
+              --name github-release `
+              --username $env:GITHUB_ACTOR_NAME `
+              --password $env:GITHUB_TOKEN `
+              --store-password-in-clear-text
+          if (0 -ne $LASTEXITCODE) {
+              throw "GitHub Packages source configuration failed with status $LASTEXITCODE."
+          }
+
+          $package = 'artifacts/package/Icod.Tar.${{ needs.metadata.outputs.version }}.nupkg'
+          dotnet nuget push $package `
+              --source github-release `
+              --api-key $env:GITHUB_TOKEN `
+              --skip-duplicate
+          if (0 -ne $LASTEXITCODE) {
+              throw "GitHub Packages publication failed with status $LASTEXITCODE."
+          }
+
+  github-release:
+    needs: [metadata, archives, package, publish-nuget, publish-github-packages]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: artifacts/release-assets
+          merge-multiple: true
+      - name: Create checksums
+        shell: pwsh
+        run: |
+          $assetDirectory = 'artifacts/release-assets'
+          $files = @(
+              Get-ChildItem -LiteralPath $assetDirectory -File |
+                  Where-Object { $_.Extension -in @('.zip', '.nupkg') } |
+                  Sort-Object Name
+          )
+          if (7 -ne $files.Count) {
+              throw "Expected seven release binaries before checksumming; found $($files.Count)."
+          }
+
+          $lines = foreach ($file in $files) {
+              $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+              "$hash  $($file.Name)"
+          }
+          [System.IO.File]::WriteAllLines(
+              (Join-Path $assetDirectory 'SHA256SUMS.txt'),
+              $lines,
+              [System.Text.UTF8Encoding]::new($false)
+          )
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = '${{ needs.metadata.outputs.version }}'
+          $assetDirectory = [System.IO.Path]::GetFullPath('artifacts/release-assets')
+          $notes = @'
+          ## Installation
+
+          Install the .NET tool from NuGet.org:
+
+          ```text
+          dotnet tool install --global Icod.Tar --version {0}
+          ```
+
+          The installed command is `tar`.
+
+          Runtime-specific executable ZIPs are attached for Windows, Linux, and
+          macOS on both x64 and ARM64. Each ZIP contains `tar` (or `tar.exe`
+          on Windows), `README.md`, and `LICENSE`, and requires the .NET 10 runtime.
+          '@ -f $version
+
+          $assets = @(
+              Get-ChildItem -LiteralPath $assetDirectory -File |
+                  Where-Object { $_.Extension -in @('.zip', '.nupkg', '.txt') } |
+                  Sort-Object Name |
+                  ForEach-Object { $_.FullName }
+          )
+          if (8 -ne $assets.Count) {
+              throw "Expected eight GitHub Release assets; found $($assets.Count)."
+          }
+
+          $arguments = @(
+              'release', 'create', $tag,
+              '--verify-tag',
+              '--title', "Icod.Tar $version",
+              '--generate-notes',
+              '--notes', $notes
+          )
+          if ('true' -eq '${{ needs.metadata.outputs.prerelease }}') {
+              $arguments += '--prerelease'
+              $arguments += '--latest=false'
+          }
+          $arguments += $assets
+
+          & gh @arguments
+          if (0 -ne $LASTEXITCODE) {
+              throw "GitHub Release creation failed with status $LASTEXITCODE."
+          }
