@@ -20,6 +20,20 @@ The implementation supports GNU, ustar, and pax output formats; gzip compression
 
 Neutral cross-platform infrastructure comes from `Icod.CommandFramework`, including filesystem traversal, filesystem mutation, transactional replacement, process launching, and secure temporary workspaces. `Icod.Tar` has no dependency on `Icod.CoreUtils.Shared`.
 
+## INSTALLATION AND DISTRIBUTION
+
+Install the .NET tool from NuGet.org:
+
+```text
+dotnet tool install --global Icod.Tar --version 1.0.1
+```
+
+The installed command is `tar`. If the host already provides a native `tar`, normal `PATH` ordering determines which command is selected.
+
+Runtime-specific ZIP archives are also produced for Windows, Linux, and macOS on x64 and ARM64. The default ZIPs are framework-dependent and require the .NET 10 runtime. Each archive contains `tar` (or `tar.exe` on Windows), `README.md`, and `LICENSE`.
+
+See `packaging/README.md` for distribution validation and release details.
+
 ## OPERATION MODES
 
 Exactly one archive operation is required, except for `--help` and `--version`.
