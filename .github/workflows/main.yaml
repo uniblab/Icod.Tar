@@ -1,17 +1,9 @@
-name: distribution-validation
+name: main
 
 on:
-  workflow_dispatch:
-    inputs:
-      configuration:
-        description: Build configuration
-        required: true
-        default: Release
-        type: choice
-        options:
-          - Debug
-          - Staging
-          - Release
+  push:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -22,6 +14,7 @@ permissions:
 
 env:
   DOTNET_VERSION: 10.0.x
+  CONFIGURATION: Release
 
 jobs:
   metadata:
@@ -38,7 +31,7 @@ jobs:
         shell: pwsh
         run: >-
           ./packaging/Get-RepositoryMetadata.ps1
-          -Configuration '${{ inputs.configuration }}'
+          -Configuration '${{ env.CONFIGURATION }}'
           -GitHubOutputPath $env:GITHUB_OUTPUT
 
   validate:
@@ -67,13 +60,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Verify distribution
+      - name: Verify Release distribution
         shell: pwsh
         run: >-
           ./packaging/VerifyDistribution.ps1
-          -Configuration '${{ inputs.configuration }}'
+          -Configuration '${{ env.CONFIGURATION }}'
       - name: Smoke Icod.Tar distribution
         shell: pwsh
         run: >-
           ./packaging/VerifyTarDistribution.ps1
-          -Configuration '${{ inputs.configuration }}'
+          -Configuration '${{ env.CONFIGURATION }}'

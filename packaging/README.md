@@ -1,57 +1,22 @@
-# Icod.Tar distribution packaging
+# Icod.Tar build and packaging workflow
 
-`Icod.Tar` has two supported distribution forms:
+This repository follows the canonical `uniblab/.github` C#/.NET build and release pattern.
 
-1. a framework-dependent .NET tool package with package ID `Icod.Tar` and command name `tar`;
-2. runtime-specific ZIP archives containing a single published `tar` executable plus `README.md` and `LICENSE`.
+## Validation ladder
 
-The ZIP archives are produced for:
+| Lifecycle | Configuration | Work |
+| --- | --- | --- |
+| local `build.cmd` / `build.sh` | `Debug` | clean, restore, build, test, pack, exact package validation |
+| pull request | `Staging` | Windows/Linux/macOS build and test; Linux also validates generated NuGet artifacts |
+| default branch | `Release` | six-runner Windows/Linux/macOS x64/ARM64 distribution validation plus Tar product smoke |
+| `v<semver>` tag | `Release` | package/archive production and publication |
 
-- `win-x64`
-- `win-arm64`
-- `linux-x64`
-- `linux-arm64`
-- `osx-x64`
-- `osx-arm64`
+The shared scripts discover the root solution, projects, executable outputs, package identity, and package version from the repository/MSBuild instead of deriving them from the GitHub repository name.
 
-The default ZIPs are framework-dependent and therefore require the .NET 10 runtime. `BuildReleaseArchive.ps1` also accepts `-SelfContained` for manual builds when a self-contained archive is useful.
+`Get-RepositoryMetadata.ps1` exports a repository-relative solution path so metadata produced on Linux is safe to consume on Windows and macOS jobs.
 
-## Validate the distributions
+`VerifyDistribution.ps1` is the common template validation: restore, build, test, pack, and exact package verification. `VerifyTarDistribution.ps1` is the only product-specific extension. It reuses those outputs to run `tar --version`, verify/install the generated `Icod.Tar` .NET tool package from a local source, and create/list a sample tar archive.
 
-From the repository root:
+`BuildReleaseArchive.ps1` discovers the `tar` executable through MSBuild and creates framework-dependent single-file ZIPs for `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, and `osx-arm64`, including repository `LICENSE` and `README.md`.
 
-```text
-pwsh ./packaging/VerifyDistribution.ps1 -Configuration Release
-```
-
-The validation script restores, builds, and tests the solution; exercises the directly built `tar`; creates the `.nupkg`; verifies that it declares exactly one .NET tool command named `tar`; installs the package into an isolated tool path; and exercises the installed tool by creating and listing a small archive.
-
-## Build one ZIP archive
-
-For example:
-
-```text
-pwsh ./packaging/BuildReleaseArchive.ps1 -Configuration Release -RuntimeIdentifier win-x64 -Version 1.0.1
-```
-
-The resulting archive is written under `artifacts/release/` with a name such as:
-
-```text
-Icod.Tar-1.0.1-win-x64.zip
-```
-
-## Release contract
-
-Pushing a tag named `v<version>` starts `.github/workflows/release.yaml`. The workflow requires the tagged commit to be contained in `main` and requires the tag version to match both `<Version>` and `<PackageVersion>` in `Icod.Tar.csproj`.
-
-A successful release:
-
-- validates the distribution on Windows, Linux, and macOS on x64 and ARM64;
-- builds all six ZIP archives;
-- builds the `Icod.Tar` NuGet tool package;
-- publishes the package to NuGet.org;
-- publishes the package to GitHub Packages;
-- creates SHA-256 checksums; and
-- creates the GitHub Release with the ZIPs, `.nupkg`, and checksum file.
-
-The NuGet.org publication follows the same trusted-publishing setup used by the other Icod command suites and expects the `NUGET_USER` repository secret used by `NuGet/login@v1`.
+Tagged releases require the tag to match `v<semver>` and the tagged commit to be contained in the default branch. Only NuGet packages whose actual nuspec version matches the tag version are selected. NuGet.org publication uses OIDC Trusted Publishing through the GitHub `Release` environment; GitHub Packages uses `GITHUB_TOKEN`. Both package publication paths use `--skip-duplicate`.
