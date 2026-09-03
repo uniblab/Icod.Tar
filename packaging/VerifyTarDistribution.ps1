@@ -25,10 +25,10 @@ $packageDirectory = Join-Path $validationRoot 'packages'
 $toolPath = Join-Path $validationRoot 'tool'
 $nugetConfigPath = Join-Path $validationRoot 'NuGet.Config'
 $outputDirectory = Join-Path $repositoryRoot "bin/$Configuration/$targetFramework"
-$isWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+$isWindowsPlatform = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
     [System.Runtime.InteropServices.OSPlatform]::Windows
 )
-$executableName = if ($isWindows) { 'tar.exe' } else { 'tar' }
+$executableName = if ($isWindowsPlatform) { 'tar.exe' } else { 'tar' }
 $standaloneExecutable = Join-Path $outputDirectory $executableName
 if (-not (Test-Path -LiteralPath $standaloneExecutable -PathType Leaf)) {
     throw "Expected standalone executable '$standaloneExecutable'."
