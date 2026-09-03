@@ -13,11 +13,11 @@
 		<AssemblyName>tar</AssemblyName>
 		<RootNamespace>Icod.Tar</RootNamespace>
 		<Configurations>Debug;Release;Staging</Configurations>
-		<Version>1.0.1</Version>
-		<AssemblyVersion>1.0.1.0</AssemblyVersion>
+		<Version>1.0.2</Version>
+		<AssemblyVersion>1.0.2.0</AssemblyVersion>
 	</PropertyGroup>
 	<PropertyGroup>
-		<PackageVersion>1.0.1</PackageVersion>
+		<PackageVersion>1.0.2</PackageVersion>
 		<PackAsTool>true</PackAsTool>
 		<ToolCommandName>tar</ToolCommandName>
 		<PackageId>Icod.Tar</PackageId>
@@ -30,7 +30,7 @@
 		<PublishRepositoryUrl>true</PublishRepositoryUrl>
 		<PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
 		<PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
-		<PackageReleaseNotes>Initial Icod.Tar .NET tool and runtime-specific ZIP distribution.</PackageReleaseNotes>
+		<PackageReleaseNotes>Icod.Tar 1.0.2 records the normalized repository build/CI lifecycle and a documentation refresh; no command behavior change is intended.</PackageReleaseNotes>
 		<PackageTags>tar;gnu-tar;gnu;archive;archiving;compression;gzip;bzip2;xz;zstd;cli;command-line;tool;dotnet-tool;icod;posix;pax;ustar;cross-platform;net10;dotnet</PackageTags>
 	</PropertyGroup>
 	<PropertyGroup Condition=" '$(PlatformTarget)' == '' ">
