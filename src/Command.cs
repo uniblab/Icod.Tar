@@ -26,7 +26,7 @@ public static class Command {
 				return 0;
 			}
 			if ( options.Version ) {
-				await stdout.WriteLineAsync( "tar (Icod.Tar) 1.0.1; GNU tar 1.35 compatibility baseline" ).ConfigureAwait( false );
+				await stdout.WriteLineAsync( "tar (Icod.Tar) 1.0.2; GNU tar 1.35 compatibility baseline" ).ConfigureAwait( false );
 				return 0;
 			}
 			var engine = new TarArchiveEngine( stdout, stderr );
