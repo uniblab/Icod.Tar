@@ -8,129 +8,38 @@ param(
     [ValidateSet('Debug', 'Staging', 'Release')]
     [string]$Configuration = 'Release',
 
+    [string]$ArchiveBaseName = '',
+
     [switch]$SelfContained
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$IsWindowsPlatform = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
-    [System.Runtime.InteropServices.OSPlatform]::Windows
-)
-$IsLinuxPlatform = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
-    [System.Runtime.InteropServices.OSPlatform]::Linux
-)
-$IsMacOSPlatform = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
-    [System.Runtime.InteropServices.OSPlatform]::OSX
-)
-
-function Invoke-DotNet {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string[]]$Arguments
-    )
-
-    Write-Host "> dotnet $($Arguments -join ' ')"
-    & dotnet @Arguments
-    if (0 -ne $LASTEXITCODE) {
-        throw "dotnet exited with status $LASTEXITCODE."
-    }
-}
-
-function Get-ExecutableFileName {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Rid
-    )
-
-    if ($Rid.StartsWith('win-', [System.StringComparison]::OrdinalIgnoreCase)) {
-        return 'tar.exe'
-    }
-
-    return 'tar'
-}
-
-function Get-CurrentRuntimeIdentifier {
-    $architecture = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
-    $architectureName = if ([System.Runtime.InteropServices.Architecture]::X64 -eq $architecture) {
-        'x64'
-    } elseif ([System.Runtime.InteropServices.Architecture]::Arm64 -eq $architecture) {
-        'arm64'
-    } else {
-        return ''
-    }
-
-    if ($IsWindowsPlatform) {
-        return "win-$architectureName"
-    }
-    if ($IsLinuxPlatform) {
-        return "linux-$architectureName"
-    }
-    if ($IsMacOSPlatform) {
-        return "osx-$architectureName"
-    }
-
-    return ''
-}
-
-function Invoke-Executable {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Path
-    )
-
-    Write-Host "> $Path --version"
-    & $Path --version
-    if (0 -ne $LASTEXITCODE) {
-        throw "Executable '$Path' exited with status $LASTEXITCODE."
-    }
-}
-
-function Assert-ArchiveContents {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$ArchivePath,
-
-        [Parameter(Mandatory = $true)]
-        [string]$RootDirectoryName,
-
-        [Parameter(Mandatory = $true)]
-        [string[]]$ExpectedFileNames
-    )
-
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $archive = [System.IO.Compression.ZipFile]::OpenRead($ArchivePath)
-    try {
-        $entries = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
-        foreach ($fileName in $ExpectedFileNames) {
-            $expectedEntry = "$RootDirectoryName/$fileName"
-            if ($entries -notcontains $expectedEntry) {
-                throw "Archive '$ArchivePath' does not contain '$expectedEntry'."
-            }
-        }
-    } finally {
-        $archive.Dispose()
-    }
-}
-
-if ([string]::IsNullOrWhiteSpace($RuntimeIdentifier)) {
-    throw 'RuntimeIdentifier must not be empty.'
-}
-if ([string]::IsNullOrWhiteSpace($Version)) {
-    throw 'Version must not be empty.'
-}
-
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$projectPath = Join-Path $repositoryRoot 'Icod.Tar.csproj'
+Import-Module (Join-Path $PSScriptRoot 'RepositoryTools.psm1') -Force
+
+$solutionPath = Get-RepositorySolution -RepositoryRoot $repositoryRoot
+$projects = @(Get-SolutionProjects -SolutionPath $solutionPath -RepositoryRoot $repositoryRoot)
+$executables = @(Get-ExecutableProjects -ProjectPaths $projects -Configuration $Configuration)
+if (0 -eq $executables.Count) {
+    throw 'The solution contains no executable projects to archive.'
+}
+
+if ([string]::IsNullOrWhiteSpace($ArchiveBaseName)) {
+    $ArchiveBaseName = Split-Path $repositoryRoot -Leaf
+}
+
 $releaseRoot = Join-Path $repositoryRoot 'artifacts/release'
-$publishDirectory = Join-Path $releaseRoot "publish/$RuntimeIdentifier"
-$stageDirectoryName = "Icod.Tar-$Version-$RuntimeIdentifier"
+$publishRoot = Join-Path $releaseRoot "publish/$RuntimeIdentifier"
+$stageDirectoryName = "$ArchiveBaseName-$Version-$RuntimeIdentifier"
 $stageParent = Join-Path $releaseRoot 'stage'
 $stageDirectory = Join-Path $stageParent $stageDirectoryName
 $archivePath = Join-Path $releaseRoot "$stageDirectoryName.zip"
 $selfContainedValue = if ($SelfContained) { 'true' } else { 'false' }
+$stagedExecutables = @()
 
-foreach ($path in @($publishDirectory, $stageDirectory)) {
+foreach ($path in @($publishRoot, $stageDirectory)) {
     if (Test-Path -LiteralPath $path) {
         Remove-Item -LiteralPath $path -Recurse -Force
     }
@@ -139,48 +48,52 @@ if (Test-Path -LiteralPath $archivePath) {
     Remove-Item -LiteralPath $archivePath -Force
 }
 
-New-Item -ItemType Directory -Path $publishDirectory -Force | Out-Null
+New-Item -ItemType Directory -Path $publishRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $stageDirectory -Force | Out-Null
 
 Push-Location $repositoryRoot
 try {
-    Invoke-DotNet -Arguments @(
-        'publish',
-        $projectPath,
-        '-c', $Configuration,
-        '-r', $RuntimeIdentifier,
-        '--self-contained', $selfContainedValue,
-        "-p:PublishSelfContained=$selfContainedValue",
-        '-p:PublishSingleFile=true',
-        '-p:PublishTrimmed=false',
-        '-p:DebugType=None',
-        '-p:DebugSymbols=false',
-        '-p:ContinuousIntegrationBuild=true',
-        '-o', $publishDirectory
-    )
+    Invoke-DotNet -Arguments @('restore', $solutionPath, '-r', $RuntimeIdentifier)
 
-    $executableFileName = Get-ExecutableFileName -Rid $RuntimeIdentifier
-    $publishedExecutable = Join-Path $publishDirectory $executableFileName
-    if (-not (Test-Path -LiteralPath $publishedExecutable -PathType Leaf)) {
-        throw "Publish did not produce '$publishedExecutable'."
+    foreach ($executable in $executables) {
+        $publishDirectory = Join-Path $publishRoot $executable.AssemblyName
+        New-Item -ItemType Directory -Path $publishDirectory -Force | Out-Null
+
+        Invoke-DotNet -Arguments @(
+            'publish', $executable.ProjectPath,
+            '-c', $Configuration,
+            '-r', $RuntimeIdentifier,
+            '--no-restore',
+            '--self-contained', $selfContainedValue,
+            "-p:PublishSelfContained=$selfContainedValue",
+            '-p:PublishSingleFile=true',
+            '-p:PublishTrimmed=false',
+            '-p:DebugType=None',
+            '-p:DebugSymbols=false',
+            '-p:ContinuousIntegrationBuild=true',
+            '-o', $publishDirectory
+        )
+
+        $fileName = if ($RuntimeIdentifier.StartsWith('win-', [System.StringComparison]::OrdinalIgnoreCase)) {
+            "$($executable.AssemblyName).exe"
+        } else {
+            $executable.AssemblyName
+        }
+        $publishedExecutable = Join-Path $publishDirectory $fileName
+        if (-not (Test-Path -LiteralPath $publishedExecutable -PathType Leaf)) {
+            throw "Publish did not produce '$publishedExecutable'."
+        }
+
+        $stagedExecutable = Join-Path $stageDirectory $fileName
+        Copy-Item -LiteralPath $publishedExecutable -Destination $stagedExecutable
+        $stagedExecutables += $stagedExecutable
     }
 
-    Copy-Item -LiteralPath $publishedExecutable -Destination (Join-Path $stageDirectory $executableFileName)
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'LICENSE') -Destination (Join-Path $stageDirectory 'LICENSE')
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'README.md') -Destination (Join-Path $stageDirectory 'README.md')
-
-    $currentRid = Get-CurrentRuntimeIdentifier
-    if ($RuntimeIdentifier -eq $currentRid) {
-        $stagedExecutable = Join-Path $stageDirectory $executableFileName
-        if (-not $IsWindowsPlatform) {
-            & chmod +x $stagedExecutable
-            if (0 -ne $LASTEXITCODE) {
-                throw "chmod failed for '$stagedExecutable'."
-            }
+    foreach ($supportFile in @('LICENSE', 'README.md')) {
+        $source = Join-Path $repositoryRoot $supportFile
+        if (Test-Path -LiteralPath $source -PathType Leaf) {
+            Copy-Item -LiteralPath $source -Destination (Join-Path $stageDirectory $supportFile)
         }
-        Invoke-Executable -Path $stagedExecutable
-    } else {
-        Write-Host "Skipping executable smoke test because host RID '$currentRid' does not match '$RuntimeIdentifier'."
     }
 
     if ($RuntimeIdentifier.StartsWith('win-', [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -188,9 +101,14 @@ try {
     } else {
         $zipCommand = Get-Command zip -ErrorAction SilentlyContinue
         if ($null -eq $zipCommand) {
-            throw "The 'zip' command is required to preserve executable permissions for '$RuntimeIdentifier' archives."
+            throw "The 'zip' command is required to preserve executable permissions."
         }
-
+        foreach ($stagedExecutable in $stagedExecutables) {
+            & chmod +x $stagedExecutable
+            if (0 -ne $LASTEXITCODE) {
+                throw "chmod failed for '$stagedExecutable'."
+            }
+        }
         Push-Location $stageParent
         try {
             & $zipCommand.Source -r -q $archivePath $stageDirectoryName
@@ -206,15 +124,7 @@ try {
         throw "Release archive '$archivePath' was not produced."
     }
 
-    Assert-ArchiveContents `
-        -ArchivePath $archivePath `
-        -RootDirectoryName $stageDirectoryName `
-        -ExpectedFileNames @($executableFileName, 'LICENSE', 'README.md')
-
-    Write-Host ''
     Write-Host "Created release archive: $archivePath"
-    Write-Host "  Runtime identifier: $RuntimeIdentifier"
-    Write-Host "  Self-contained:     $selfContainedValue"
 } finally {
     Pop-Location
 }
