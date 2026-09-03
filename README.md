@@ -1,5 +1,7 @@
 # TAR(1)
 
+![Icod.DiffUtils](https://raw.githubusercontent.com/uniblab/Icod.Tar/main/Icod.Tar.banner.png)
+
 [![PR Staging build](https://github.com/uniblab/Icod.Tar/actions/workflows/pull-request.yaml/badge.svg?event=pull_request)](https://github.com/uniblab/Icod.Tar/actions/workflows/pull-request.yaml)
 [![Main Release validation](https://github.com/uniblab/Icod.Tar/actions/workflows/main.yaml/badge.svg?branch=main)](https://github.com/uniblab/Icod.Tar/actions/workflows/main.yaml)
 

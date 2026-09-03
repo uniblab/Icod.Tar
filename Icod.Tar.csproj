@@ -32,6 +32,7 @@
 		<PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
 		<PackageReleaseNotes>Icod.Tar 1.0.2 records the normalized repository build/CI lifecycle and a documentation refresh; no command behavior change is intended.</PackageReleaseNotes>
 		<PackageTags>tar;gnu-tar;gnu;archive;archiving;compression;gzip;bzip2;xz;zstd;cli;command-line;tool;dotnet-tool;icod;posix;pax;ustar;cross-platform;net10;dotnet</PackageTags>
+		<PackageIcon>icon.png</PackageIcon>
 	</PropertyGroup>
 	<PropertyGroup Condition=" '$(PlatformTarget)' == '' ">
 		<PlatformTarget>AnyCPU</PlatformTarget>
@@ -76,13 +77,13 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<None Include="icon.png" Pack="true" PackagePath="\" />
 		<Content Include="README.md">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 			<TargetPath>$(AssemblyName).README.md</TargetPath>
 			<Pack>true</Pack>
 			<PackagePath>\</PackagePath>
 		</Content>
-
 		<Content Include="LICENSE">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 			<TargetPath>$(AssemblyName).LICENSE.txt</TargetPath>
